@@ -41,8 +41,30 @@ r.POST("/todos", func(c *gin.Context){
 // c.JSON(http.StatusOK, todo) sends a JSON response with a 200 OK status code and the todo object as the response body. This indicates that the request was successful and returns the created todo item in the response. The todo variable contains the data that was just inserted into the database, including any auto-generated fields such as ID or timestamps, which can be useful for the client to have after creating a new record.
 	c.JSON(http.StatusOK, todo)
 })
+r.GET("/todos", func(c *gin.Context){
+	var todos[]models.Todo
+	// to fetch all todos from database
+	result:= database.DB.Find(&todos)
+	if result.Error!=nil{
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":result.Error.Error()})
+			return
+		}
+		// return all todos as json
+	c.JSON(http.StatusOK, todos)
+	})
 
-
+r.GET("/todos/:id", func(c *gin.Context){
+	var todo models.Todo
+	id:= c.Param("id")
+	result :=database.DB.First(&todo,id)
+	if result.Error!=nil{
+		c.JSON(http.StatusNotFound, gin.H{
+			"error":"Todo not found"})
+		return
+	}
+	c.JSON(http.StatusOK, todo)
+})
 
 r.Run()
 }
