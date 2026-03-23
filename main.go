@@ -66,5 +66,27 @@ r.GET("/todos/:id", func(c *gin.Context){
 	c.JSON(http.StatusOK, todo)
 })
 
+r.PUT("/todos/:id", func(c *gin.Context){
+	var todo models.Todo
+	id:= c.Param("id")
+	// find the existing todo
+	if err:=database.DB.First(&todo,id).Error; err!=nil{
+		c.JSON(http.StatusNotFound,gin.H{"error": "Todo not found"})
+		return
+	}
+	// bind the updated data
+	var updatedTodo models.Todo
+	if err:=c.ShouldBindJSON(&updatedTodo); err!=nil{
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": err.Error()})
+		return
+	}
+todo.Title=updatedTodo.Title
+todo.Completed=updatedTodo.Completed
+database.DB.Save(&todo)
+c.JSON(http.StatusOK, todo)
+})
+
+
 r.Run()
 }
