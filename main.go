@@ -87,6 +87,18 @@ database.DB.Save(&todo)
 c.JSON(http.StatusOK, todo)
 })
 
+r.DELETE("todos/:id", func (c *gin.Context){
+	var todo models.Todo
+	id:=c.Param("id")
+	if err:=database.DB.First(&todo, id).Error; err!=nil{
+		c.JSON(http.StatusNotFound, gin.H{
+			"error":"Todo not found"})
+		return
+	}
+	database.DB.Delete(&todo)
+c.JSON(http.StatusOK, gin.H{"message":"Todo deleted successfully",
+})
+})
 
 r.Run()
 }
