@@ -1,130 +1,94 @@
+// Command todo-app-go is a todo list: a Go + Gin API backed by a
+// SQLite file, with a small web page in public/ that talks to it.
 package main
 
 import (
+	"context"
+	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
+
 	"todo-app-go/database"
-	"todo-app-go/models"
+	"todo-app-go/handlers"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
-func main() {
-	r := gin.Default()
-
-
-	r.Use(func(c *gin.Context) {
+// corsMiddleware allows the web page to call the API from any origin
+// during local development, and answers OPTIONS preflight requests.
+func corsMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
 		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
 		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
-
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(204)
+		if c.Request.Method == http.MethodOptions {
+			c.AbortWithStatus(http.StatusNoContent)
 			return
 		}
-
 		c.Next()
-	})
+	}
+}
 
+// setupRouter wires every route. It is separate from main so tests
+// can build a router against a temporary database.
+func setupRouter(db *gorm.DB) *gin.Engine {
+	r := gin.Default()
+	r.Use(corsMiddleware())
 
 	r.Static("/public", "./public")
 	r.StaticFile("/", "./public/index.html")
 
-	
-	database.Connect()
-
-	
 	r.GET("/api/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{
-			"message": "API is running",
-		})
+		c.JSON(http.StatusOK, gin.H{"message": "API is running"})
 	})
+	r.POST("/api/todos", handlers.CreateTodo(db))
+	r.GET("/api/todos", handlers.ListTodos(db))
+	r.GET("/api/todos/:id", handlers.GetTodo(db))
+	r.PUT("/api/todos/:id", handlers.UpdateTodo(db))
+	r.DELETE("/api/todos/:id", handlers.DeleteTodo(db))
+	return r
+}
 
-	// Create a new todo
-	r.POST("/api/todos", func(c *gin.Context) {
-		var todo models.Todo
-		if err := c.ShouldBindJSON(&todo); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		result := database.DB.Create(&todo)
-		if result.Error != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": result.Error.Error()})
-			return
-		}
-		c.JSON(http.StatusOK, todo)
-	})
+// port returns the PORT environment variable, or 8080 when unset.
+func port() string {
+	if p := strings.TrimSpace(os.Getenv("PORT")); p != "" {
+		return p
+	}
+	return "8080"
+}
 
-	// Get all todos
-	r.GET("/api/todos", func(c *gin.Context) {
-		var todos []models.Todo
-		result := database.DB.Find(&todos)
-		if result.Error != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": result.Error.Error(),
-			})
-			return
-		}
-		if todos == nil {
-			todos = []models.Todo{}
-		}
-		c.JSON(http.StatusOK, todos)
-	})
+func main() {
+	database.Connect()
+	router := setupRouter(database.DB)
 
-	// Get a specific todo
-	r.GET("/api/todos/:id", func(c *gin.Context) {
-		var todo models.Todo
-		id := c.Param("id")
-		result := database.DB.First(&todo, id)
-		if result.Error != nil {
-			c.JSON(http.StatusNotFound, gin.H{
-				"error": "Todo not found",
-			})
-			return
-		}
-		c.JSON(http.StatusOK, todo)
-	})
+	server := &http.Server{
+		Addr:         ":" + port(),
+		Handler:      router,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
 
-	// Update a todo
-	r.PUT("/api/todos/:id", func(c *gin.Context) {
-		var todo models.Todo
-		id := c.Param("id")
-		if err := database.DB.First(&todo, id).Error; err != nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Todo not found"})
-			return
+	go func() {
+		stop := make(chan os.Signal, 1)
+		signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+		<-stop
+		log.Println("Shutting down...")
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(ctx); err != nil {
+			log.Printf("Shutdown error: %v", err)
 		}
-		var updatedTodo models.Todo
-		if err := c.ShouldBindJSON(&updatedTodo); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": err.Error(),
-			})
-			return
-		}
-		todo.Title = updatedTodo.Title
-		todo.Description = updatedTodo.Description
-		todo.Completed = updatedTodo.Completed
-		todo.Priority = updatedTodo.Priority
-		todo.DueDate = updatedTodo.DueDate
-		todo.Category = updatedTodo.Category
-		database.DB.Save(&todo)
-		c.JSON(http.StatusOK, todo)
-	})
+	}()
 
-	// Delete a todo
-	r.DELETE("/api/todos/:id", func(c *gin.Context) {
-		var todo models.Todo
-		id := c.Param("id")
-		if err := database.DB.First(&todo, id).Error; err != nil {
-			c.JSON(http.StatusNotFound, gin.H{
-				"error": "Todo not found",
-			})
-			return
-		}
-		database.DB.Delete(&todo)
-		c.JSON(http.StatusOK, gin.H{
-			"message": "Todo deleted successfully",
-		})
-	})
-
-	r.Run()
+	log.Printf("Starting server at http://localhost:%s", port())
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatal(err)
+	}
 }
