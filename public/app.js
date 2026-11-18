@@ -1,5 +1,5 @@
 // API Base URL
-const API_BASE = 'http://localhost:8080/api';
+const API_BASE = '/api'; // same origin, so it works on any host and port
 
 // DOM Elements
 const todoTitle = document.getElementById('todoTitle');
