@@ -1,0 +1,10 @@
+# Built binaries
+/todo-app-go
+*.exe
+
+# SQLite database created at runtime (do not commit your tasks)
+/todo.db
+*.db
+
+# Local environment settings (copy .env.example to .env)
+.env
